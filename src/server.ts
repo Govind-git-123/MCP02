@@ -8,81 +8,120 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// Get Chuck Norris joke tool
-const getChuckJoke = server.tool(
-  "get-chuck-joke",
-  "Get a random Chuck Norris joke",
-  async () => {
-    const response = await fetch("https://api.chucknorris.io/jokes/random");
-    const data = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: data.value,
-        },
-      ],
-    };
-  }
-);
 
-// Get Chuck Norris joke by category tool
-const getChuckJokeByCategory = server.tool(
-  "get-chuck-joke-by-category",
-  "Get a random Chuck Norris joke by category",
+// ServiceNow API configuration (replace with your instance if needed)
+const SERVICENOW_INSTANCE = "https://accentureabdemo2.service-now.com";
+
+// Helper for ServiceNow API requests
+async function serviceNowRequest(
+  path: string,
+  query: Record<string, string> = {},
+  username: string,
+  password: string
+) {
+  const url = new URL(`${SERVICENOW_INSTANCE}${path}`);
+  Object.entries(query).forEach(([k, v]) => url.searchParams.append(k, v));
+  const response = await fetch(url.toString(), {
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "Authorization":
+        "Basic " + Buffer.from(`${username}:${password}`).toString("base64"),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`ServiceNow API error: ${response.status}`);
+  }
+  return response.json();
+}
+
+// Tool: List Incidents
+const listIncidents = server.tool(
+  "list-incidents",
+  "List ServiceNow incidents",
   {
-    category: z.string().describe("Category of the Chuck Norris joke"),
+    username: z.string().describe("Your ServiceNow username"),
+    password: z.string().describe("Your ServiceNow password"),
   },
-  async (params: { category: string }) => {
-    const response = await fetch(
-      `https://api.chucknorris.io/jokes/random?category=${params.category}`
+  async (params: { username: string; password: string }) => {
+    const data = await serviceNowRequest(
+      "/api/now/table/incident",
+      { sysparm_limit: "5" },
+      params.username,
+      params.password
     );
-    const data = await response.json();
     return {
       content: [
         {
           type: "text",
-          text: data.value,
+          text: data.result.map((i: any) => `${i.number}: ${i.short_description}`).join("\n"),
         },
       ],
     };
   }
 );
 
-// Get Chuck Norris joke categories tool
-const getChuckCategories = server.tool(
-  "get-chuck-categories",
-  "Get all available categories for Chuck Norris jokes",
-  async () => {
-    const response = await fetch("https://api.chucknorris.io/jokes/categories");
-    const data = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: data.join(", "),
-        },
-      ],
-    };
-  }
-);
-
-// Get Dad joke tool
-const getDadJoke = server.tool(
-  "get-dad-joke",
-  "Get a random dad joke",
-  async () => {
-    const response = await fetch("https://icanhazdadjoke.com/", {
-      headers: {
-        Accept: "application/json",
+// Tool: Get Incident by Number
+const getIncidentByNumber = server.tool(
+  "get-incident-by-number",
+  "Get a ServiceNow incident by number",
+  {
+    number: z.string().describe("Incident number, e.g. INC0010001"),
+    username: z.string().describe("Your ServiceNow username"),
+    password: z.string().describe("Your ServiceNow password"),
+  },
+  async (params: { number: string; username: string; password: string }) => {
+    const data = await serviceNowRequest(
+      "/api/now/table/incident",
+      {
+        number: params.number,
+        sysparm_limit: "1",
       },
-    });
-    const data = await response.json();
+      params.username,
+      params.password
+    );
+    if (!data.result.length) {
+      return { content: [{ type: "text", text: "Incident not found." }] };
+    }
+    const inc = data.result[0];
     return {
       content: [
         {
           type: "text",
-          text: data.joke,
+          text: `Number: ${inc.number}\nShort Description: ${inc.short_description}\nState: ${inc.state}`,
+        },
+      ],
+    };
+  }
+);
+
+// Tool: Search Knowledge Articles
+const searchKnowledge = server.tool(
+  "search-knowledge",
+  "Search ServiceNow knowledge articles by keyword",
+  {
+    keyword: z.string().describe("Keyword to search in knowledge articles"),
+    username: z.string().describe("Your ServiceNow username"),
+    password: z.string().describe("Your ServiceNow password"),
+  },
+  async (params: { keyword: string; username: string; password: string }) => {
+    const data = await serviceNowRequest(
+      "/api/now/table/kb_knowledge",
+      {
+        text: params.keyword,
+        sysparm_limit: "5",
+      },
+      params.username,
+      params.password
+    );
+    if (!data.result.length) {
+      return { content: [{ type: "text", text: "No articles found." }] };
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: data.result.map((a: any) => `${a.number || a.sys_id}: ${a.short_description}`).join("\n"),
         },
       ],
     };
